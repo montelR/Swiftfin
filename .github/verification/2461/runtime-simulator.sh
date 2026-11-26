@@ -45,6 +45,8 @@ pack_result "$RUNNER_TEMP/build.xcresult" simulator-build.xcresult
 # Verify physical Mach-O metadata, not just command-line target strings.
 python3 "$ci/runtime-macro-audit.py" "$derived" "$out" || { echo 'BLOCKED: host macro metadata not verified' | tee "$out/macro-status.txt"; exit 1; }
 if [ "$rc" != 0 ]; then tail -80 "$out/simulator-build.log"; echo 'BLOCKED: destination-only build failed' | tee "$out/runtime-status.txt"; exit "$rc"; fi
+echo 'PASS: host macro metadata verified' | tee "$out/macro-status.txt"
+python3 "$ci/runtime-pin-audit.py" "$packages" "$out" "$ci/expected-pins.json"
 echo 'PASS: destination-only simulator build' | tee "$out/runtime-status.txt"
 app="$derived/Build/Products/Debug-appletvsimulator/Swiftfin.app"
 test -d "$app"
