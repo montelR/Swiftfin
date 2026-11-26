@@ -1,0 +1,64 @@
+name: "Swiftfin #2461 official Xcode verification"
+on:
+  push:
+    branches:
+      - verification/2461-official-xcode
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: verify-2461-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+jobs:
+  archive:
+    if: github.repository == 'montelR/Swiftfin' && github.event.repository.private == false && github.ref == 'refs/heads/verification/2461-official-xcode'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - key: ios
+            scheme: Swiftfin
+          - key: tvos
+            scheme: Swiftfin tvOS
+    name: Archive ${{ matrix.scheme }}
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Official archive and audit
+        run: bash .github/verification/2461/archive.sh '${{ matrix.key }}' '${{ matrix.scheme }}'
+      - name: Retain archive, logs, result bundle and hashes
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: official-2461-${{ matrix.key }}
+          path: ${{ runner.temp }}/evidence/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+  tvos-simulator:
+    if: github.repository == 'montelR/Swiftfin' && github.event.repository.private == false && github.ref == 'refs/heads/verification/2461-official-xcode'
+    needs: archive
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Official tvOS simulator verification
+        run: bash .github/verification/2461/simulator.sh
+      - name: Retain simulator evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: official-2461-tvos-simulator
+          path: ${{ runner.temp }}/evidence/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
