@@ -63,7 +63,9 @@ git diff -- "$testfile" > "$out/test-only-overlay.patch"
 test "$(git diff --name-only)" = "$testfile"
 cp "$ci/comparison-tests.swift" "$out/test-harness.swift"
 unset SDKROOT ARCHS SUPPORTED_PLATFORMS ONLY_ACTIVE_ARCH
-args=(-project Swiftfin.xcodeproj -scheme 'Swiftfin tvOS' -configuration Debug -destination "platform=tvOS Simulator,id=$udid" -clonedSourcePackagesDirPath "$packages" -derivedDataPath "$derived" -disableAutomaticPackageResolution -onlyUsePackageVersionsFromResolvedFile -skipMacroValidation)
+args=(-project Swiftfin.xcodeproj -scheme 'Swiftfin tvOS' -configuration Debug -destination "platform=tvOS Simulator,id=$udid" -clonedSourcePackagesDirPath "$packages" -derivedDataPath "$derived" -disableAutomaticPackageResolution -onlyUsePackageVersionsFromResolvedFile -skipMacroValidation -destination-timeout 180)
+# Check the exact preinstalled device BEFORE any build or test; never erase it.
+python3 "$ci/comparison-readiness.py" prebuild "$udid" "$out/prebuild-readiness" "${args[@]}"
 printf '%q ' xcodebuild "${args[@]}" build-for-testing > "$out/build-command.txt"
 echo >> "$out/build-command.txt"
 set +e
@@ -80,11 +82,13 @@ grep -Eiq 'platform[[:space:]]+TVOSSIMULATOR' "$out/app-macho.txt"
 failed=0
 for scenario in testPausedForward testPausedBackward testActiveForward testActiveBackward testControlsAndPlayback testSupplementFocus; do
   dest="$out/$scenario"; mkdir -p "$dest"
-  # Erase simulator data to ensure a fresh default interval and demo sign-in per independent test.
-  xcrun simctl shutdown "$udid" > "$dest/reset.log" 2>&1 || true
-  xcrun simctl erase "$udid" >> "$dest/reset.log" 2>&1
-  xcrun simctl boot "$udid" >> "$dest/reset.log" 2>&1
-  xcrun simctl bootstatus "$udid" -b >> "$dest/reset.log" 2>&1
+  # Isolate app data and keychain, not the preinstalled simulator runtime.
+  export COMPARISON_PRODUCTS="$derived/Build/Products/Debug-appletvsimulator"
+  if ! python3 "$ci/comparison-readiness.py" scenario "$udid" "$dest/readiness" "${args[@]}" > "$dest/reset.log" 2>&1; then
+    echo "BLOCKED: readiness/reset failed for $scenario" | tee "$dest/scenario-status.txt"
+    failed=1
+    continue
+  fi
   bundle="$RUNNER_TEMP/$scenario.xcresult"
   set +e
   xcodebuild "${args[@]}" -parallel-testing-enabled NO -collect-test-diagnostics never -resultBundlePath "$bundle" "-only-testing:Swiftfin tvOS Screenshots/Phase4CComparisonTests/$scenario" test-without-building > "$dest/test.log" 2>&1
