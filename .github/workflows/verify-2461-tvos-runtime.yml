@@ -1,0 +1,36 @@
+name: "Swiftfin #2461 tvOS simulator only"
+on:
+  push:
+    branches: [verification/2461-official-xcode]
+    paths:
+      - .github/workflows/verify-2461-tvos-runtime.yml
+      - .github/verification/2461/runtime-*
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: verify-2461-tvos-runtime-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+jobs:
+  simulator:
+    if: github.repository == 'montelR/Swiftfin' && github.event.repository.private == false && github.ref == 'refs/heads/verification/2461-official-xcode'
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Destination-only build and targeted runtime
+        run: bash .github/verification/2461/runtime-simulator.sh
+      - name: Preserve evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: official-2461-tvos-runtime
+          path: ${{ runner.temp }}/evidence/
+          retention-days: 7
+          compression-level: 0
+          if-no-files-found: error

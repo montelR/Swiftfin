@@ -3,6 +3,10 @@ on:
   push:
     branches:
       - verification/2461-official-xcode
+    paths:
+      - .github/verification/2461/archive.sh
+      - .github/verification/2461/audit.py
+      - .github/verification/2461/expected-pins.json
   workflow_dispatch:
 permissions:
   contents: read

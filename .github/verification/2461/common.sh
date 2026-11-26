@@ -15,7 +15,8 @@ xcrun swift --version | tee "$out/swift-version.txt"
 grep -Eq 'Swift version 6\.4([. ]|$)' "$out/swift-version.txt"
 xcodebuild -showsdks
 df -h "$RUNNER_TEMP"
-appcommit="$(git rev-parse HEAD^)"
+appcommit=12b3c2b4684ced6b412adf865ca793685e331465
+git merge-base --is-ancestor "$appcommit" HEAD
 test "$(git rev-parse "$appcommit^")" = "$base"
 git diff --binary --abbrev=8 "$base" "$appcommit" > "$out/approved.patch"
 test "$(shasum -a 256 "$out/approved.patch" | awk '{print $1}')" = "$expected"
