@@ -1,0 +1,75 @@
+name: "Swiftfin #2461 recover oversized verification evidence"
+on:
+  push:
+    branches: [verification/2461-official-xcode]
+    paths:
+      - .github/workflows/verify-2461-recover-evidence.yml
+permissions:
+  contents: read
+  actions: read
+jobs:
+  recover:
+    if: github.repository == 'montelR/Swiftfin' && github.event.repository.private == false && github.ref == 'refs/heads/verification/2461-official-xcode'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Retrieve and verify original artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/recovery"
+          cd "$RUNNER_TEMP/recovery"
+          curl --fail --silent --show-error --location --retry 2 --max-time 300 \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            'https://api.github.com/repos/montelR/Swiftfin/actions/artifacts/15144858874/zip' -o original.zip
+          test "$(stat -c %s original.zip)" = 726437474
+          echo '004a23666ca9008b71e28b727810285821ddac642c3464186e38d391772748af  original.zip' | sha256sum -c
+          unzip -tq original.zip
+          split -b 150M -d -a 2 original.zip part-
+          sha256sum part-* > parts.sha256
+          unzip -Z1 original.zip > inventory.txt
+      - uses: actions/upload-artifact@v7
+        with:
+          name: recovery-2461-part-00
+          path: ${{ runner.temp }}/recovery/part-00
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: recovery-2461-part-01
+          path: ${{ runner.temp }}/recovery/part-01
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: recovery-2461-part-02
+          path: ${{ runner.temp }}/recovery/part-02
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: recovery-2461-part-03
+          path: ${{ runner.temp }}/recovery/part-03
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: recovery-2461-part-04
+          path: ${{ runner.temp }}/recovery/part-04
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: recovery-2461-manifest
+          path: |
+            ${{ runner.temp }}/recovery/parts.sha256
+            ${{ runner.temp }}/recovery/inventory.txt
+          retention-days: 7
+          if-no-files-found: error
