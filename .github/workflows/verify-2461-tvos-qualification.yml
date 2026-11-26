@@ -1,0 +1,69 @@
+name: "Swiftfin #2461 upstream harness qualification"
+on:
+  push:
+    branches: [verification/2461-official-xcode]
+    paths:
+      - .github/workflows/verify-2461-tvos-qualification.yml
+      - .github/verification/2461/qualification-*
+permissions:
+  contents: read
+concurrency:
+  group: verify-2461-qualification-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  qualify:
+    if: github.repository == 'montelR/Swiftfin' && github.event.repository.private == false && github.ref == 'refs/heads/verification/2461-official-xcode'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: paused
+            first: testPausedForward
+            second: testPausedBackward
+          - shard: active
+            first: testActiveForward
+            second: testActiveBackward
+          - shard: presentation
+            first: testControlsAndPlayback
+            second: testSupplementFocus
+    name: Upstream qualification (${{ matrix.shard }})
+    runs-on: xcode-27
+    timeout-minutes: 60
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_27.1.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Build and qualify immutable upstream
+        run: bash .github/verification/2461/qualification-run.sh upstream 35a5f35812deb9838dfc69b6554a6a3f935797d1 '${{ matrix.first }}' '${{ matrix.second }}'
+      - name: Preserve build and integrity evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: qualification-2461-${{ matrix.shard }}-build
+          path: |
+            ${{ runner.temp }}/evidence/*
+            !${{ runner.temp }}/evidence/test*/**
+          retention-days: 7
+          compression-level: 0
+          if-no-files-found: error
+      - name: Preserve first scenario
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: qualification-2461-${{ matrix.first }}
+          path: ${{ runner.temp }}/evidence/${{ matrix.first }}/
+          retention-days: 7
+          compression-level: 0
+          if-no-files-found: warn
+      - name: Preserve second scenario
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: qualification-2461-${{ matrix.second }}
+          path: ${{ runner.temp }}/evidence/${{ matrix.second }}/
+          retention-days: 7
+          compression-level: 0
+          if-no-files-found: warn
