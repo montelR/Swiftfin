@@ -273,8 +273,10 @@ extension VideoPlayer {
                     #if os(iOS)
                     SafeRegion(systemInsets: .none) {
                         SafeRegionItem {
-                            GestureView()
-                                .environment(\.panGestureDirection, panGestureDirection)
+                            GestureView(allowsDownwardPan: { gesture in
+                                viewState.containerView?.allowsDownwardPlaybackPan(gesture) == true
+                            })
+                            .environment(\.panGestureDirection, panGestureDirection)
                         }
                         .ignoresSafeRegion(.all)
 
@@ -302,13 +304,14 @@ extension VideoPlayer {
                     .environment(
                         \.panAction,
                         .init(
-                            action: {
+                            identifiedAction: {
                                 viewState.containerView?.handlePanGesture(
                                     translation: $0,
                                     velocity: $1,
                                     location: $2,
                                     unitPoint: $3,
-                                    state: $4
+                                    state: $4,
+                                    identity: $5
                                 )
                             }
                         )
@@ -611,6 +614,7 @@ extension VideoPlayer {
 
             super.init(nibName: nil, bundle: nil)
 
+            viewState.containerView?.detachSurface()
             viewState.containerView = self
             viewState.connect(mediaSession: mediaSession)
         }
@@ -636,7 +640,13 @@ extension VideoPlayer {
                 cancelSupplementPan()
                 return
             }
-            guard state == .began || isPanning,
+
+            if state == .cancelled || state == .failed {
+                cancelSupplementPan()
+                return
+            }
+            guard state == .began || state == .changed || state == .ended,
+                  state == .began || isPanning,
                   let playerCompactBottomAnchor
             else { return }
 
@@ -650,7 +660,7 @@ extension VideoPlayer {
                 didStartPanningUpWithoutOverlay = !viewState.isPresentingControls
 
                 if didStartPanningUpWithoutOverlay {
-                    viewState.showControls()
+                    viewState.showControlsForSupplementPan()
                 }
             }
 
@@ -663,9 +673,9 @@ extension VideoPlayer {
                 let shouldHaveSupplementPresented = supplementOffset < minimumTranslation
 
                 if shouldHaveSupplementPresented, !viewState.isPresentingSupplement {
-                    viewState.selectedSupplementID = viewState.supplements.first?.id
+                    viewState.previewSupplementForPan(viewState.supplements.first?.id)
                 } else if !shouldHaveSupplementPresented, viewState.isPresentingSupplement {
-                    viewState.selectedSupplementID = nil
+                    viewState.previewSupplementForPan(nil)
                 }
 
                 supplementHeight = supplementContainerOffset()
@@ -690,6 +700,7 @@ extension VideoPlayer {
 
                 isPanning = false
                 presentSupplementContainer(viewState.isPresentingSupplement)
+                viewState.finishSupplementPanPresentation(restore: false)
 
                 let shouldActuallyDismissOverlay = didStartPanningUpWithoutOverlay && !viewState.isPresentingSupplement
 
@@ -738,13 +749,14 @@ extension VideoPlayer {
 
             isPanning = false
             verticalPanGestureStartConstant = nil
-            viewState.setInteraction(.pan, active: false)
+            presentSupplementContainer(viewState.isPresentingSupplement)
+            viewState.finishSupplementPanPresentation(restore: true)
 
             #if os(iOS)
-            viewState.panHandlingAction = nil
+            viewState.resetPanHandling()
+            #else
+            viewState.setInteraction(.pan, active: false)
             #endif
-
-            presentSupplementContainer(viewState.isPresentingSupplement)
         }
 
         // MARK: - present
@@ -966,10 +978,14 @@ extension VideoPlayer {
             #if os(iOS)
             if lastSupplementLayout?.tabletop != tabletop {
                 viewState.cancelTapGesture()
-                viewState.cancelScrub()
+                viewState.cancelPanHandling()
                 viewState.resetZoom()
-                viewState.panHandlingAction = nil
-                viewState.setInteraction(.pan, active: false)
+            }
+            #endif
+
+            #if os(iOS)
+            if lastSupplementLayout?.layout != layout, viewState.panHandlingIdentity != nil {
+                viewState.cancelPanHandling()
             }
             #endif
 
@@ -1088,8 +1104,8 @@ extension VideoPlayer {
         func detachSurface() {
             guard viewState.containerView === self else { return }
 
-            viewState.containerView = nil
             viewState.disconnect()
+            viewState.containerView = nil
         }
 
         #if os(iOS)

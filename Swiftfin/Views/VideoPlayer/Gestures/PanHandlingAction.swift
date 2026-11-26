@@ -8,6 +8,14 @@
 
 import SwiftUI
 
+enum PanHandlingOwner {
+
+    case action(any _PanHandlingAction)
+    case swipe
+    case supplement
+    case zoom
+}
+
 protocol _PanHandlingAction {
 
     associatedtype Value: Comparable & AdditiveArithmetic

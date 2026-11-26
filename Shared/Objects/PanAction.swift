@@ -14,29 +14,57 @@ extension EnvironmentValues {
     var panAction: PanAction? = nil
 }
 
+/// A recognizer can produce many pans. Match both the surface and the gesture lifetime.
+struct PanGestureIdentity: Equatable {
+
+    let recognizer: UUID
+    let sequence: UUID
+}
+
 struct PanAction {
 
-    let action: (
+    private let action: (
         _ translation: CGPoint,
         _ velocity: CGPoint,
         _ location: CGPoint,
         _ unitPoint: UnitPoint,
-        _ state: UIGestureRecognizer.State
+        _ state: UIGestureRecognizer.State,
+        _ identity: PanGestureIdentity?
     ) -> Void
+
+    let tracksIdentity: Bool
+
+    init(action: @escaping (CGPoint, CGPoint, CGPoint, UnitPoint, UIGestureRecognizer.State) -> Void) {
+        tracksIdentity = false
+        self.action = { translation, velocity, location, unitPoint, state, _ in
+            action(translation, velocity, location, unitPoint, state)
+        }
+    }
+
+    init(identifiedAction: @escaping (CGPoint, CGPoint, CGPoint, UnitPoint, UIGestureRecognizer.State, PanGestureIdentity) -> Void) {
+        tracksIdentity = true
+        action = { translation, velocity, location, unitPoint, state, identity in
+            guard let identity else { return }
+
+            identifiedAction(translation, velocity, location, unitPoint, state, identity)
+        }
+    }
 
     func callAsFunction(
         translation: CGPoint,
         velocity: CGPoint,
         location: CGPoint,
         unitPoint: UnitPoint,
-        state: UIGestureRecognizer.State
+        state: UIGestureRecognizer.State,
+        identity: PanGestureIdentity? = nil
     ) {
         action(
             translation,
             velocity,
             location,
             unitPoint,
-            state
+            state,
+            identity
         )
     }
 }

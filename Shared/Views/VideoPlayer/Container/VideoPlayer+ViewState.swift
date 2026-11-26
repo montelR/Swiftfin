@@ -127,6 +127,7 @@ extension VideoPlayer {
         #endif
 
         private(set) var presentation: Presentation = .hidden
+        private var supplementPanPresentationOrigin: Presentation?
 
         private(set) var aspectFillBehavior: AspectFillBehavior = .fit
 
@@ -141,6 +142,12 @@ extension VideoPlayer {
                 setInteraction(.pan, active: false)
             }
 
+            #if os(iOS)
+            if case .zoom? = panHandlingOwner {
+                resetPanHandling()
+            }
+            #endif
+
             zoom.reset()
             setInteraction(.pinch, active: false)
         }
@@ -150,6 +157,10 @@ extension VideoPlayer {
                 if isGestureLocked {
                     cancelScrub()
                     zoom.endInteraction()
+                    #if os(iOS)
+                    containerView?.cancelSupplementPan()
+                    resetPanHandling()
+                    #endif
                     setInteraction(.pan, active: false)
                     setInteraction(.pinch, active: false)
                     hideControls()
@@ -183,10 +194,19 @@ extension VideoPlayer {
                 return id
             }
             set {
-                guard !isGestureLocked, newValue != selectedSupplementID else { return }
-
-                transition(to: newValue.map { .supplement($0) } ?? .controls)
+                selectSupplement(newValue, isPanPreview: false)
             }
+        }
+
+        /// Only the active supplement drag may preserve its temporary presentation origin.
+        func previewSupplementForPan(_ id: String?) {
+            selectSupplement(id, isPanPreview: true)
+        }
+
+        private func selectSupplement(_ id: String?, isPanPreview: Bool) {
+            guard !isGestureLocked, id != selectedSupplementID else { return }
+
+            transition(to: id.map { .supplement($0) } ?? .controls, isPanPreview: isPanPreview)
         }
 
         var selectedSupplement: any VideoPlayerSupplement? {
@@ -359,6 +379,7 @@ extension VideoPlayer {
         @ObservationIgnored
         weak var containerView: VideoPlayer.UIContainerViewController?
         private(set) weak var mediaSession: MediaSession?
+        private var isDisconnecting = false
 
         private let timer: PokeIntervalTimer
         private var interactions: Set<Interaction> = []
@@ -368,12 +389,27 @@ extension VideoPlayer {
         private var sessionObservations: Set<AnyCancellable> = []
 
         #if os(iOS)
-        var panHandlingAction: any _PanHandlingAction?
+        var panHandlingOwner: PanHandlingOwner?
+        var panHandlingIdentity: PanGestureIdentity?
         var didSwipe: Bool = false
         var lastTapLocation: CGPoint?
 
         var isAccessibilityFocusOnVideo: Bool = false {
             didSet { refreshAutoDismiss() }
+        }
+
+        func resetPanHandling() {
+            panHandlingOwner = nil
+            panHandlingIdentity = nil
+            didSwipe = false
+            setInteraction(.pan, active: false)
+        }
+
+        func cancelPanHandling() {
+            cancelScrub()
+            containerView?.cancelSupplementPan()
+            zoom.endPan()
+            resetPanHandling()
         }
 
         func cancelTapGesture() {
@@ -535,16 +571,14 @@ extension VideoPlayer {
         }
 
         private func playbackItemDidChange() {
+            // Settle the old drag even if the replacement item has the same supplements.
+            containerView?.cancelSupplementPan()
             if let selectedSupplementID {
                 if supplements.contains(where: { $0.id == selectedSupplementID }) {
                     transition(to: presentation)
                 } else {
                     self.selectedSupplementID = nil
                 }
-            }
-
-            if supplements.isEmpty {
-                containerView?.cancelSupplementPan()
             }
 
             cancelScrub()
@@ -559,7 +593,7 @@ extension VideoPlayer {
 
             #if os(iOS)
             cancelTapGesture()
-            panHandlingAction = nil
+            cancelPanHandling()
             #endif
 
             fitVideo()
@@ -584,17 +618,21 @@ extension VideoPlayer {
         }
 
         func disconnect() {
+            isDisconnecting = true
             sessionObservations.removeAll()
             cancelScrub()
-            timer.stop()
 
             #if os(iOS)
             cancelTapGesture()
-            panHandlingAction = nil
+            cancelPanHandling()
+            #else
+            containerView?.cancelSupplementPan()
             #endif
 
             mediaSession = nil
             hiddenPlaybackSeconds = .zero
+            timer.stop()
+            isDisconnecting = false
         }
 
         func fillVideo() {
@@ -619,9 +657,29 @@ extension VideoPlayer {
             }
         }
 
+        /// A fallback pan reveals controls provisionally. An independent presentation
+        /// request (even one that leaves controls visible) supersedes that reveal.
+        func showControlsForSupplementPan() {
+            let origin = presentation
+            showControls()
+            if origin != presentation, presentation == .controls {
+                supplementPanPresentationOrigin = origin
+            }
+        }
+
+        func finishSupplementPanPresentation(restore: Bool) {
+            let origin = supplementPanPresentationOrigin
+            supplementPanPresentationOrigin = nil
+
+            if restore, let origin, presentation == .controls {
+                transition(to: origin)
+            }
+        }
+
         func showControls() {
             guard !isGestureLocked else { return }
 
+            supplementPanPresentationOrigin = nil
             if !isPresentingControls {
                 transition(to: .controls)
             } else {
@@ -633,6 +691,7 @@ extension VideoPlayer {
         func showProgress(keepingControls: Bool = true) {
             guard !isGestureLocked else { return }
 
+            supplementPanPresentationOrigin = nil
             if presentation == .hidden || !keepingControls {
                 transition(to: .progress)
             } else {
@@ -669,7 +728,9 @@ extension VideoPlayer {
         }
 
         private var canAutoDismiss: Bool {
-            guard presentation != .hidden,
+            guard mediaSession != nil,
+                  !isDisconnecting,
+                  presentation != .hidden,
                   !isTabletop,
                   !isScrubbing,
                   !isPresentingSupplement,
@@ -714,7 +775,10 @@ extension VideoPlayer {
             }
         }
 
-        private func transition(to presentation: Presentation) {
+        private func transition(to presentation: Presentation, isPanPreview: Bool = false) {
+            if !isPanPreview {
+                supplementPanPresentationOrigin = nil
+            }
             #if os(iOS)
             // A presentation change outside the tap handler ends the tap sequence.
             if self.presentation != presentation {

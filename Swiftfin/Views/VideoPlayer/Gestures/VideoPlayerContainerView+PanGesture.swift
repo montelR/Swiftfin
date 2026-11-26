@@ -13,91 +13,118 @@ import UIKit
 
 extension VideoPlayer.UIContainerViewController {
 
+    func allowsDownwardPlaybackPan(_ gesture: UIPanGestureRecognizer) -> Bool {
+        guard !viewState.isGestureLocked,
+              !viewState.isPresentingControls,
+              !viewState.isPresentingSupplement,
+              let view = gesture.view,
+              view.bounds.width > 0,
+              playbackPanDirection(for: gesture.velocity(in: view)) == .down
+        else { return false }
+
+        let x = gesture.location(in: view).x / view.bounds.width
+        switch verticalPanAction(at: x) {
+        case .brightness, .volume:
+            return true
+        case .scrub, .slowScrub:
+            return viewState.mediaSession?.canSeek == true && viewState.mediaSession?.item.runtime != nil
+        case .none:
+            return false
+        }
+    }
+
+    private func playbackPanDirection(for velocity: CGPoint) -> Direction {
+        // Prioritize horizontal detection just a bit more
+        if velocity.y.magnitude < velocity.x.magnitude + 20 {
+            return velocity.x > 0 ? .right : .left
+        }
+
+        return velocity.y > 0 ? .down : .up
+    }
+
+    private func verticalPanAction(at x: CGFloat) -> PanGestureAction {
+        if x < 0.5 {
+            Defaults[.VideoPlayer.Gesture.verticalPanLeftAction]
+        } else {
+            Defaults[.VideoPlayer.Gesture.verticalPanRightAction]
+        }
+    }
+
     func handlePanGesture(
         translation: CGPoint,
         velocity: CGPoint,
         location: CGPoint,
         unitPoint: UnitPoint,
-        state: UIGestureRecognizer.State
+        state: UIGestureRecognizer.State,
+        identity: PanGestureIdentity
     ) {
-        guard checkGestureLock() else { return }
+        let isTerminal = state == .ended || state == .cancelled || state == .failed
+        if state == .began {
+            guard viewState.panHandlingIdentity == nil,
+                  viewState.mediaSession != nil,
+                  checkGestureLock() else { return }
 
+            viewState.panHandlingIdentity = identity
+        } else {
+            guard viewState.panHandlingIdentity == identity else { return }
+        }
+
+        defer {
+            if isTerminal, viewState.panHandlingIdentity == identity {
+                viewState.resetPanHandling()
+            }
+        }
+
+        guard state == .began || state == .changed || isTerminal else { return }
+
+        let direction = playbackPanDirection(for: velocity)
         if state == .began {
             viewState.cancelTapGesture()
             viewState.setInteraction(.pan, active: true)
-        }
 
-        if state == .ended || state == .cancelled || state == .failed {
-            viewState.setInteraction(.pan, active: false)
-        }
-
-        if viewState.isPresentingSupplement {
-            handleSupplementPanAction(
-                translation: translation,
-                velocity: velocity.y,
-                state: state
-            )
-
-            return
-        }
-
-        if viewState.canPanZoom || viewState.zoom.isPanning {
-            handleZoomPan(translation: translation, state: state)
-            return
-        }
-
-        let direction: Direction = {
-            // Prioritize horizontal detection just a bit more
-            if velocity.y.magnitude < velocity.x.magnitude + 20 {
-                return velocity.x > 0 ? .right : .left
+            if viewState.isPresentingSupplement {
+                viewState.panHandlingOwner = .supplement
+            } else if viewState.canPanZoom {
+                viewState.panHandlingOwner = .zoom
+            } else if Defaults[.VideoPlayer.Gesture.horizontalSwipeAction] != .none, direction.isHorizontal {
+                viewState.panHandlingOwner = .swipe
+            } else {
+                viewState.panHandlingOwner = .action(
+                    makePanHandlingAction(direction: direction, location: location, unitPoint: unitPoint)
+                )
             }
+        }
 
-            return velocity.y > 0 ? .down : .up
-        }()
+        // The initial route owns the entire gesture, including its terminal event.
+        guard let owner = viewState.panHandlingOwner else { return }
 
-        let handlingState: _PanHandlingState = .init(
-            translation: translation,
-            velocity: velocity,
-            location: location,
-            unitPoint: unitPoint,
-            gestureState: state
-        )
+        switch owner {
+        case .supplement:
+            handleSupplementPanAction(translation: translation, velocity: velocity.y, state: state)
 
-        if Defaults[.VideoPlayer.Gesture.horizontalSwipeAction] != .none, direction.isHorizontal {
-            if !viewState.didSwipe,
+        case .zoom:
+            handleZoomPan(translation: translation, state: state)
+
+        case .swipe:
+            if state != .cancelled,
+               state != .failed,
+               direction.isHorizontal,
+               !viewState.didSwipe,
                max(velocity.x.magnitude, velocity.y.magnitude) >= 1200,
                max(translation.x.magnitude, translation.y.magnitude) >= 80 {
                 handleSwipeAction(direction: direction)
                 viewState.didSwipe = true
             }
 
-            if state == .ended {
-                viewState.didSwipe = false
-            }
-
-            return
-        }
-
-        if state == .began {
-            let newAction = makePanHandlingAction(
-                direction: direction,
+        case let .action(action):
+            let handlingState: _PanHandlingState = .init(
+                translation: translation,
+                velocity: velocity,
                 location: location,
-                unitPoint: unitPoint
+                unitPoint: unitPoint,
+                gestureState: state
             )
-
-            viewState.panHandlingAction = newAction
-        }
-
-        if let currentAction = viewState.panHandlingAction {
-            unpackAndHandlePan(
-                handlingState: handlingState,
-                action: currentAction
-            )
-        }
-
-        guard state != .ended, state != .cancelled, state != .failed else {
-            viewState.panHandlingAction = nil
-            return
+            unpackAndHandlePan(handlingState: handlingState, action: action)
         }
     }
 
@@ -144,15 +171,7 @@ extension VideoPlayer.UIContainerViewController {
             if viewState.isPresentingControls {
                 Self.SupplementPanHandlingAction
             } else if direction.isVertical {
-                if unitPoint.x < 0.5 {
-                    panActionForGestureAction(
-                        for: Defaults[.VideoPlayer.Gesture.verticalPanLeftAction]
-                    )
-                } else {
-                    panActionForGestureAction(
-                        for: Defaults[.VideoPlayer.Gesture.verticalPanRightAction]
-                    )
-                }
+                panActionForGestureAction(for: verticalPanAction(at: unitPoint.x))
             } else {
                 panActionForGestureAction(
                     for: Defaults[.VideoPlayer.Gesture.horizontalPanAction]
@@ -240,7 +259,8 @@ extension VideoPlayer.UIContainerViewController {
                 state.containerView?.view.window?.windowScene?.screen.brightness ?? 0.5
             }
         ) { startState, handlingState, viewState in
-            guard handlingState.gestureState != .ended else { return }
+            // Terminal events settle ownership, not the adjustment value.
+            guard handlingState.gestureState == .began || handlingState.gestureState == .changed else { return }
 
             let translation: CGFloat = {
                 if startState.direction.isHorizontal {
@@ -346,7 +366,7 @@ extension VideoPlayer.UIContainerViewController {
         return PanHandlingAction<Float>(
             startValue: AVAudioSession.sharedInstance().outputVolume
         ) { startState, handlingState, _ in
-            guard handlingState.gestureState != .ended,
+            guard handlingState.gestureState == .began || handlingState.gestureState == .changed,
                   let slider = volumeView
                     .subviews
                     .first(where: { $0 is UISlider }) as? UISlider else { return }

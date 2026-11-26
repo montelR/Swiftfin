@@ -11,6 +11,7 @@ import UIKit
 class DirectionalPanGestureRecognizer: UIPanGestureRecognizer {
 
     var direction: Direction
+    var allowsDownwardPan: ((UIPanGestureRecognizer) -> Bool)?
 
     init(direction: Direction, target: AnyObject, action: Selector) {
         self.direction = direction
@@ -30,6 +31,7 @@ class DirectionalPanGestureRecognizer: UIPanGestureRecognizer {
             switch direction {
             case .all: ()
             case .allButDown where isUp || isHorizontal: ()
+            case .allButDown where velocity.y > 0 && allowsDownwardPan?(self) == true: ()
             case .horizontal where isHorizontal: ()
             case .vertical where isVertical: ()
             case .up where isVertical && velocity.y < 0: ()

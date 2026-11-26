@@ -205,13 +205,14 @@ extension VideoPlayer.UIContainerViewController {
             .environment(
                 \.panAction,
                 .init(
-                    action: {
+                    identifiedAction: {
                         viewState.containerView?.handlePanGesture(
                             translation: $0,
                             velocity: $1,
                             location: $2,
                             unitPoint: $3,
-                            state: $4
+                            state: $4,
+                            identity: $5
                         )
                     }
                 )
